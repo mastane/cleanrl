@@ -47,8 +47,6 @@ def parse_args():
         help="the number of atoms")
     parser.add_argument("--v-max", type=float, default=100,
         help="the number of atoms")
-    parser.add_argument("--n-avars", type=int, default=4,
-        help="the number of avars")
     parser.add_argument("--buffer-size", type=int, default=10000,
         help="the replay memory buffer size")
     parser.add_argument("--gamma", type=float, default=0.99,
@@ -89,11 +87,10 @@ def make_env(env_id, seed, idx, capture_video, run_name):
 
 # ALGO LOGIC: initialize agent here:
 class QNetwork(nn.Module):
-    def __init__(self, env, n_atoms=101, v_min=-100, v_max=100, n_avars=4):
+    def __init__(self, env, n_atoms=101, v_min=-100, v_max=100):
         super().__init__()
         self.env = env
         self.n_atoms = n_atoms
-        self.n_avars = n_avars
         self.register_buffer("atoms", torch.linspace(v_min, v_max, steps=n_atoms))
         self.n = env.single_action_space.n
         self.network = nn.Sequential(
@@ -101,35 +98,18 @@ class QNetwork(nn.Module):
             nn.ReLU(),
             nn.Linear(120, 84),
             nn.ReLU(),
-            nn.Linear(84, self.n * n_atoms),
-        )
-        self.network_avar = nn.Sequential(
-            nn.Linear(np.array(env.single_observation_space.shape).prod(), 120),
-            nn.ReLU(),
-            nn.Linear(120, 84),
-            nn.ReLU(),
-            nn.Linear(84, self.n * n_avars),
+            nn.Linear(84, 2 * self.n * n_atoms),
         )
 
     def get_action(self, x, action=None):
         logits = self.network(x)
         # probability mass function for each action
-        pmfs = torch.softmax(logits.view(len(x), self.n, self.n_atoms), dim=2)
-        q_values = (pmfs * self.atoms).sum(2)
+        pmfs = torch.softmax(logits.view(len(x), self.n, self.n_atoms, 2).select(-1,0), dim=2)
+        avars = logits.view(len(x), self.n, self.n_atoms, 2).select(-1,1)
+        q_values = (pmfs * avars).sum(2)
         if action is None:
             action = torch.argmax(q_values, 1)
-        return action, pmfs[torch.arange(len(x)), action]
-
-    def get_action_avar(self, x, action=None):
-        logits = self.network(x)
-        # probability mass function for each action
-        pmfs = torch.softmax(logits.view(len(x), self.n, self.n_atoms), dim=2)
-
-        avars = self.network_avar(x)
-        q_values = torch.mean( avars.view(len(x), self.n, self.n_avars), dim=2 )
-        if action is None:
-            action = torch.argmax(q_values, 1)
-        return action, avars[torch.arange(len(x)), action], pmfs[torch.arange(len(x)), action]
+        return action, pmfs[torch.arange(len(x)), action], avars[torch.arange(len(x)), action]
 
 
 def linear_schedule(start_e: float, end_e: float, duration: int, t: int):
@@ -170,9 +150,9 @@ if __name__ == "__main__":
     envs = gym.vector.SyncVectorEnv([make_env(args.env_id, args.seed, 0, args.capture_video, run_name)])
     assert isinstance(envs.single_action_space, gym.spaces.Discrete), "only discrete action space is supported"
 
-    q_network = QNetwork(envs, n_atoms=args.n_atoms, v_min=args.v_min, v_max=args.v_max, n_avars=args.n_avars).to(device)
+    q_network = QNetwork(envs, n_atoms=args.n_atoms, v_min=args.v_min, v_max=args.v_max).to(device)
     optimizer = optim.Adam(q_network.parameters(), lr=args.learning_rate, eps=0.01 / args.batch_size)
-    target_network = QNetwork(envs, n_atoms=args.n_atoms, v_min=args.v_min, v_max=args.v_max, n_avars=args.n_avars).to(device)
+    target_network = QNetwork(envs, n_atoms=args.n_atoms, v_min=args.v_min, v_max=args.v_max).to(device)
     target_network.load_state_dict(q_network.state_dict())
 
     rb = ReplayBuffer(
@@ -193,7 +173,7 @@ if __name__ == "__main__":
             actions = np.array([envs.single_action_space.sample() for _ in range(envs.num_envs)])
         else:
             #actions, pmf = q_network.get_action(torch.Tensor(obs).to(device))
-            actions, avar, pmf = q_network.get_action_avar(torch.Tensor(obs).to(device))
+            actions, pmf, avar = q_network.get_action(torch.Tensor(obs).to(device))
             actions = actions.cpu().numpy()
 
         # TRY NOT TO MODIFY: execute the game and log data.
@@ -224,7 +204,7 @@ if __name__ == "__main__":
                 data = rb.sample(args.batch_size)
                 with torch.no_grad():
                     #_, next_pmfs = target_network.get_action(data.next_observations)
-                    _, next_avars, next_pmfs = target_network.get_action_avar(data.next_observations)
+                    _, next_pmfs, next_avars = target_network.get_action(data.next_observations)
                     next_atoms = data.rewards + args.gamma * target_network.atoms * (1 - data.dones)
                     # projection
                     delta_z = target_network.atoms[1] - target_network.atoms[0]
@@ -243,7 +223,7 @@ if __name__ == "__main__":
                         target_pmfs[i].index_add_(0, u[i].long(), d_m_u[i])
 
                 #_, old_pmfs = q_network.get_action(data.observations, data.actions.flatten())
-                _, old_avars, old_pmfs = q_network.get_action_avar(data.observations, data.actions.flatten())
+                _, old_pmfs, old_avars = q_network.get_action(data.observations, data.actions.flatten())
                 loss = (-(target_pmfs * old_pmfs.clamp(min=1e-5, max=1 - 1e-5).log()).sum(-1)).mean()
 
                 if global_step % 100 == 0:
