@@ -117,6 +117,63 @@ def linear_schedule(start_e: float, end_e: float, duration: int, t: int):
     return max(slope * t + start_e, end_e)
 
 
+def categorical_l2_project(
+    z_p: Array,
+    probs: Array,
+    z_q: Array
+) -> Array:
+  """Projects a categorical distribution (z_p, p) onto a different support z_q.
+  The projection step minimizes an L2-metric over the cumulative distribution
+  functions (CDFs) of the source and target distributions.
+  Let kq be len(z_q) and kp be len(z_p). This projection works for any
+  support z_q, in particular kq need not be equal to kp.
+  See "A Distributional Perspective on RL" by Bellemare et al.
+  (https://arxiv.org/abs/1707.06887).
+  Args:
+    z_p: support of distribution p.
+    probs: probability values.
+    z_q: support to project distribution (z_p, probs) onto.
+  Returns:
+    Projection of (z_p, p) onto support z_q under Cramer distance.
+  """
+  #chex.assert_rank([z_p, probs, z_q], 1)
+  #chex.assert_type([z_p, probs, z_q], float)
+
+  kp = z_p.shape[0]
+  kq = z_q.shape[0]
+
+  # Construct helper arrays from z_q.
+  d_pos = jnp.roll(z_q, shift=-1)
+  d_neg = jnp.roll(z_q, shift=1)
+
+  # Clip z_p to be in new support range (vmin, vmax).
+  z_p = jnp.clip(z_p, z_q[0], z_q[-1])[None, :]
+  assert z_p.shape == (1, kp)
+
+  # Get the distance between atom values in support.
+  d_pos = (d_pos - z_q)[:, None]  # z_q[i+1] - z_q[i]
+  d_neg = (z_q - d_neg)[:, None]  # z_q[i] - z_q[i-1]
+  z_q = z_q[:, None]
+  assert z_q.shape == (kq, 1)
+
+  # Ensure that we do not divide by zero, in case of atoms of identical value.
+  d_neg = jnp.where(d_neg > 0, 1. / d_neg, jnp.zeros_like(d_neg))
+  d_pos = jnp.where(d_pos > 0, 1. / d_pos, jnp.zeros_like(d_pos))
+
+  delta_qp = z_p - z_q  # clip(z_p)[j] - z_q[i]
+  d_sign = (delta_qp >= 0.).astype(probs.dtype)
+  assert delta_qp.shape == (kq, kp)
+  assert d_sign.shape == (kq, kp)
+
+  # Matrix of entries sgn(a_ij) * |a_ij|, with a_ij = clip(z_p)[j] - z_q[i].
+  delta_hat = (d_sign * delta_qp * d_pos) - ((1. - d_sign) * delta_qp * d_neg)
+  probs = probs[None, :]
+  assert delta_hat.shape == (kq, kp)
+  assert probs.shape == (1, kp)
+
+  return jnp.sum(jnp.clip(1. - delta_hat, 0., 1.) * probs, axis=-1)
+
+
 if __name__ == "__main__":
     args = parse_args()
     run_name = f"{args.env_id}__{args.exp_name}__{args.seed}__{int(time.time())}"
