@@ -117,11 +117,7 @@ def linear_schedule(start_e: float, end_e: float, duration: int, t: int):
     return max(slope * t + start_e, end_e)
 
 
-def categorical_l2_project(
-    z_p: Array,
-    probs: Array,
-    z_q: Array
-) -> Array:
+def categorical_l2_project(z_p, probs, z_q):
   """Projects a categorical distribution (z_p, p) onto a different support z_q.
   The projection step minimizes an L2-metric over the cumulative distribution
   functions (CDFs) of the source and target distributions.
@@ -147,13 +143,13 @@ def categorical_l2_project(
   d_neg = z_q.roll(shifts=1, dims=-1)
 
   # Clip z_p to be in new support range (vmin, vmax).
-  z_p = z_p.clamp(z_q.min(dim=-1), z_q.max(dim=-1))[None, :]
+  z_p = z_p.clamp(z_q.min(dim=-1), z_q.max(dim=-1))[:, None, :]
   #assert z_p.shape == (1, kp)
 
   # Get the distance between atom values in support.
-  d_pos = (d_pos - z_q)[:, None]  # z_q[i+1] - z_q[i]
-  d_neg = (z_q - d_neg)[:, None]  # z_q[i] - z_q[i-1]
-  z_q = z_q[:, None]
+  d_pos = (d_pos - z_q)[:, :, None]  # z_q[i+1] - z_q[i]
+  d_neg = (z_q - d_neg)[:, :, None]  # z_q[i] - z_q[i-1]
+  z_q = z_q[:, :, None]
   #assert z_q.shape == (kq, 1)
 
   # Ensure that we do not divide by zero, in case of atoms of identical value.
@@ -167,7 +163,7 @@ def categorical_l2_project(
 
   # Matrix of entries sgn(a_ij) * |a_ij|, with a_ij = clip(z_p)[j] - z_q[i].
   delta_hat = (d_sign * delta_qp * d_pos) - ((1. - d_sign) * delta_qp * d_neg)
-  probs = probs[None, :]
+  probs = probs[:, None, :]
   #assert delta_hat.shape == (kq, kp)
   #assert probs.shape == (1, kp)
 
