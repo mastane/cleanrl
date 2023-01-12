@@ -172,7 +172,6 @@ if __name__ == "__main__":
         if random.random() < epsilon:
             actions = np.array([envs.single_action_space.sample() for _ in range(envs.num_envs)])
         else:
-            #actions, pmf = q_network.get_action(torch.Tensor(obs).to(device))
             actions, pmf, avar = q_network.get_action(torch.Tensor(obs).to(device))
             actions = actions.cpu().numpy()
 
@@ -203,7 +202,6 @@ if __name__ == "__main__":
             if global_step % args.train_frequency == 0:
                 data = rb.sample(args.batch_size)
                 with torch.no_grad():
-                    #_, next_pmfs = target_network.get_action(data.next_observations)
                     _, next_pmfs, next_avars = target_network.get_action(data.next_observations)
                     next_atoms = data.rewards + args.gamma * target_network.atoms * (1 - data.dones)
                     # projection
@@ -222,7 +220,6 @@ if __name__ == "__main__":
                         target_pmfs[i].index_add_(0, l[i].long(), d_m_l[i])
                         target_pmfs[i].index_add_(0, u[i].long(), d_m_u[i])
 
-                #_, old_pmfs = q_network.get_action(data.observations, data.actions.flatten())
                 _, old_pmfs, old_avars = q_network.get_action(data.observations, data.actions.flatten())
                 loss = (-(target_pmfs * old_pmfs.clamp(min=1e-5, max=1 - 1e-5).log()).sum(-1)).mean()
 
