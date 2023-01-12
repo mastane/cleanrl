@@ -256,7 +256,10 @@ if __name__ == "__main__":
                 data = rb.sample(args.batch_size)
                 with torch.no_grad():
                     _, next_pmfs, next_avars = target_network.get_action(data.next_observations)
-                    next_atoms = data.rewards + args.gamma * target_network.atoms * (1 - data.dones)
+                    _, _, old_avars_target = target_network.get_action(data.observations, data.actions.flatten())
+                    next_atoms = data.rewards + args.gamma * next_avars * (1 - data.dones)
+                    target_pmfs = categorical_l2_project(next_atoms, next_pmfs, old_avars_target)
+                    """
                     # projection
                     delta_z = target_network.atoms[1] - target_network.atoms[0]
                     tz = next_atoms.clamp(args.v_min, args.v_max)
@@ -272,6 +275,7 @@ if __name__ == "__main__":
                     for i in range(target_pmfs.size(0)):
                         target_pmfs[i].index_add_(0, l[i].long(), d_m_l[i])
                         target_pmfs[i].index_add_(0, u[i].long(), d_m_u[i])
+                    """
 
                 _, old_pmfs, old_avars = q_network.get_action(data.observations, data.actions.flatten())
                 loss = (-(target_pmfs * old_pmfs.clamp(min=1e-5, max=1 - 1e-5).log()).sum(-1)).mean()
