@@ -216,10 +216,10 @@ if __name__ == "__main__":
                 data = rb.sample(args.batch_size)
                 with torch.no_grad():
                     #_, next_avars, _ = target_network.get_action(data.next_observations)
-                    _, next_avars, _ = q_network.get_action(data.next_observations)  #use online q-net as target
+                    _, next_avars, next_pmfs = q_network.get_action(data.next_observations)  #use online q-net as target
                     next_atoms = data.rewards + args.gamma * next_avars * (1 - data.dones)
                     next_atoms = next_atoms.mean(dim=-1, keepdim=True)
-                    next_pmfs = torch.ones_like(next_atoms)
+                    next_pmfs_Dirac = torch.ones_like(next_atoms)
                     # projection
                     delta_z = q_network.atoms[1] - q_network.atoms[0]
                     tz = next_atoms.clamp(args.v_min, args.v_max)
@@ -229,8 +229,8 @@ if __name__ == "__main__":
                     u = b.ceil().clamp(0, args.n_atoms - 1)
                     # (l == u).float() handles the case where bj is exactly an integer
                     # example bj = 1, then the upper ceiling should be uj= 2, and lj= 1
-                    d_m_l = (u + (l == u).float() - b) * next_pmfs
-                    d_m_u = (b - l) * next_pmfs
+                    d_m_l = (u + (l == u).float() - b) * next_pmfs_Dirac
+                    d_m_u = (b - l) * next_pmfs_Dirac
                     target_pmfs = torch.zeros_like(next_pmfs)
                     for i in range(target_pmfs.size(0)):
                         target_pmfs[i].index_add_(0, l[i].long(), d_m_l[i])
