@@ -54,6 +54,8 @@ def parse_args():
         help="the number of atoms")
     parser.add_argument("--v-max", type=float, default=10,
         help="the number of atoms")
+    parser.add_argument("--n-avars", type=int, default=4,
+        help="the number of avars")
     parser.add_argument("--buffer-size", type=int, default=1000000,
         help="the replay memory buffer size")
     parser.add_argument("--gamma", type=float, default=0.99,
@@ -103,10 +105,11 @@ def make_env(env_id, seed, idx, capture_video, run_name):
 
 # ALGO LOGIC: initialize agent here:
 class QNetwork(nn.Module):
-    def __init__(self, env, n_atoms=101, v_min=-100, v_max=100):
+    def __init__(self, env, n_atoms=101, v_min=-100, v_max=100, n_avars=11):
         super().__init__()
         self.env = env
         self.n_atoms = n_atoms
+        self.n_avars = n_avars
         self.register_buffer("atoms", torch.linspace(v_min, v_max, steps=n_atoms))
         self.n = env.single_action_space.n
         self.network = nn.Sequential(
@@ -120,6 +123,18 @@ class QNetwork(nn.Module):
             nn.Linear(3136, 512),
             nn.ReLU(),
             nn.Linear(512, self.n * n_atoms),
+        )
+        self.network_avar = nn.Sequential(
+            nn.Conv2d(4, 32, 8, stride=4),
+            nn.ReLU(),
+            nn.Conv2d(32, 64, 4, stride=2),
+            nn.ReLU(),
+            nn.Conv2d(64, 64, 3, stride=1),
+            nn.ReLU(),
+            nn.Flatten(),
+            nn.Linear(3136, 512),
+            nn.ReLU(),
+            nn.Linear(512, self.n * n_avars),
         )
 
     def get_action(self, x, action=None):
