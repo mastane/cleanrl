@@ -47,7 +47,7 @@ def parse_args():
         help="the number of atoms")
     parser.add_argument("--v-max", type=float, default=100,
         help="the number of atoms")
-    parser.add_argument("--n-avars", type=int, default=101,
+    parser.add_argument("--n-avars", type=int, default=11,
         help="the number of avars")
     parser.add_argument("--buffer-size", type=int, default=10000,
         help="the replay memory buffer size")
@@ -215,8 +215,8 @@ if __name__ == "__main__":
             if global_step % args.train_frequency == 0:
                 data = rb.sample(args.batch_size)
                 with torch.no_grad():
-                    #_, next_pmfs = target_network.get_action(data.next_observations)
-                    _, next_avars, _ = target_network.get_action(data.next_observations)
+                    #_, next_avars, _ = target_network.get_action(data.next_observations)
+                    _, next_avars, _ = q_network.get_action(data.next_observations)  #use online q-net as target
                     next_atoms = data.rewards + args.gamma * next_avars * (1 - data.dones)
                     next_atoms = next_atoms.mean(dim=-1, keepdim=True)
                     next_pmfs = torch.ones_like(next_atoms)
