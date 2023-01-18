@@ -221,7 +221,7 @@ if __name__ == "__main__":
                     next_atoms = next_atoms.mean(dim=-1, keepdim=True)
                     next_pmfs = torch.ones_like(next_atoms)
                     # projection
-                    delta_z = target_network.atoms[1] - target_network.atoms[0]
+                    delta_z = q_network.atoms[1] - q_network.atoms[0]
                     tz = next_atoms.clamp(args.v_min, args.v_max)
 
                     b = (tz - args.v_min) / delta_z
@@ -241,47 +241,22 @@ if __name__ == "__main__":
 
                 # add squared Wasserstein-2 loss
 
-
-
-
-
-                num_avars = dist_qa_tm1.shape[-1]
-                # take argsort on atoms, then reorder atoms and probabilities
-                probas = jax.nn.softmax(qa_logits_target_tm1)
-                #atoms_target_tm1 = q_atoms_target_tm1
-                atoms_target_tm1 = q_atoms_tm1  # use online net as target
-                #sigma = jnp.argsort( atoms_target_tm1 )  # categorical support already sorted
-                #atoms_target_tm1 = atoms_target_tm1[sigma]
-                #probas = probas[sigma]
-                # avar intervals
-                i_window = jnp.arange( 1, num_avars + 1 ) / jnp.float32( num_avars )  # avar integration segments
-                j_right = jnp.cumsum(probas)  # cumulative probabilities of the N+1 atoms
-                j_left = j_right - probas
-                i_window = jnp.expand_dims( i_window, axis=1 )
-                j_right = jnp.expand_dims( j_right, axis=0 )
-                j_left = jnp.expand_dims( j_left, axis=0 )
-                # compute avars
-                minij = jnp.minimum( i_window, j_right )
-                maxij = jnp.maximum( i_window - 1.0/ jnp.float32( num_avars ) , j_left )
-                lengths_inter = jnp.maximum( 0.0, minij - maxij )  # matrix of lengths of intersections of intervals [(i-1)/N, i/N] with [(j-1)/(N+1), j/(N+1)]
-                dist_target = jnp.float32( num_avars ) * jnp.dot(lengths_inter, atoms_target_tm1)
-
-                # Compute target, do not backpropagate into it.
-                dist_target = jax.lax.select(stop_target_gradients,
-                                           jax.lax.stop_gradient(dist_target), dist_target)
-
-                td_errors = dist_target - dist_qa_tm1
-                td_errors = clip_gradient(td_errors, -grad_error_bound,
-                                             grad_error_bound)
-                a_losses = l2_loss(td_errors)
-                a_losses = jnp.mean(a_losses, axis=-1)
-
-
-
-
+                with torch.no_grad():
+                    # avar intervals
+                    i_window = torch.arange( 1, args.n_avars + 1 ) / args.n_avars  # avar integration segments
+                    j_right = torch.cumsum(old_pmfs, -1)  # cumulative probabilities of the N+1 atoms
+                    j_left = j_right - old_pmfs
+                    i_window = i_window[None, :, None]
+                    j_right = j_right[:, None, :]
+                    j_left = j_left[:, None, :]
+                    # compute avars
+                    minij = torch.minimum( i_window, j_right )
+                    maxij = torch.maximum( i_window - 1.0/ args.n_avars , j_left )
+                    lengths_inter = torch.maximum( torch.zeros_like(minij - maxij), minij - maxij )  # matrix of lengths of intersections of intervals [(i-1)/N, i/N] with [(j-1)/(N+1), j/(N+1)]
+                    target_avars = args.n_avars * torch.matmul(lengths_inter, q_network.atoms)
 
                 w2loss = ( old_avars - target_avars )**2
-                loss = loss + w2loss.sum(-1).mean()
+                loss = loss + w2loss.mean(-1).mean()
 
                 if global_step % 100 == 0:
                     writer.add_scalar("losses/loss", loss.item(), global_step)
