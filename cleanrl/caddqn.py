@@ -240,7 +240,46 @@ if __name__ == "__main__":
                 loss = (-(target_pmfs * old_pmfs.clamp(min=1e-5, max=1 - 1e-5).log()).sum(-1)).mean()
 
                 # add squared Wasserstein-2 loss
-                ## TODO: compute AVaRs of old_pmfs !
+
+
+
+
+
+                num_avars = dist_qa_tm1.shape[-1]
+                # take argsort on atoms, then reorder atoms and probabilities
+                probas = jax.nn.softmax(qa_logits_target_tm1)
+                #atoms_target_tm1 = q_atoms_target_tm1
+                atoms_target_tm1 = q_atoms_tm1  # use online net as target
+                #sigma = jnp.argsort( atoms_target_tm1 )  # categorical support already sorted
+                #atoms_target_tm1 = atoms_target_tm1[sigma]
+                #probas = probas[sigma]
+                # avar intervals
+                i_window = jnp.arange( 1, num_avars + 1 ) / jnp.float32( num_avars )  # avar integration segments
+                j_right = jnp.cumsum(probas)  # cumulative probabilities of the N+1 atoms
+                j_left = j_right - probas
+                i_window = jnp.expand_dims( i_window, axis=1 )
+                j_right = jnp.expand_dims( j_right, axis=0 )
+                j_left = jnp.expand_dims( j_left, axis=0 )
+                # compute avars
+                minij = jnp.minimum( i_window, j_right )
+                maxij = jnp.maximum( i_window - 1.0/ jnp.float32( num_avars ) , j_left )
+                lengths_inter = jnp.maximum( 0.0, minij - maxij )  # matrix of lengths of intersections of intervals [(i-1)/N, i/N] with [(j-1)/(N+1), j/(N+1)]
+                dist_target = jnp.float32( num_avars ) * jnp.dot(lengths_inter, atoms_target_tm1)
+
+                # Compute target, do not backpropagate into it.
+                dist_target = jax.lax.select(stop_target_gradients,
+                                           jax.lax.stop_gradient(dist_target), dist_target)
+
+                td_errors = dist_target - dist_qa_tm1
+                td_errors = clip_gradient(td_errors, -grad_error_bound,
+                                             grad_error_bound)
+                a_losses = l2_loss(td_errors)
+                a_losses = jnp.mean(a_losses, axis=-1)
+
+
+
+
+
                 w2loss = ( old_avars - target_avars )**2
                 loss = loss + w2loss.sum(-1).mean()
 
