@@ -6,6 +6,7 @@ import time
 from distutils.util import strtobool
 
 import gym
+import ale_py
 import numpy as np
 import torch
 import torch.nn as nn
@@ -42,7 +43,7 @@ def parse_args():
         help="whether to capture videos of the agent performances (check out `videos` folder)")
 
     # Algorithm specific arguments
-    parser.add_argument("--env-id", type=str, default="BreakoutNoFrameskip-v4",
+    parser.add_argument("--env-id", type=str, default="ALE/BreakoutNoFrameskip-v4",
         help="the id of the environment")
     parser.add_argument("--total-timesteps", type=int, default=10000000,
         help="total timesteps of the experiments")
