@@ -146,7 +146,7 @@ class QNetwork(nn.Module):
         q_values = avars.mean(2)
         if action is None:
             action = torch.argmax(q_values, 1)
-        return action, avars[torch.arange(len(x)), pmfs[torch.arange(len(x)), action]
+        return action, avars[torch.arange(len(x)), action], pmfs[torch.arange(len(x)), action]
 
 
 def linear_schedule(start_e: float, end_e: float, duration: int, t: int):
