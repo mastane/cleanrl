@@ -139,12 +139,14 @@ class QNetwork(nn.Module):
 
     def get_action(self, x, action=None):
         logits = self.network(x / 255.0)
+        avars = self.network_avar(x).view(len(x), self.n, self.n_avars)
         # probability mass function for each action
         pmfs = torch.softmax(logits.view(len(x), self.n, self.n_atoms), dim=2)
-        q_values = (pmfs * self.atoms).sum(2)
+        #q_values = (pmfs * self.atoms).sum(2)
+        q_values = avars.mean(2)
         if action is None:
             action = torch.argmax(q_values, 1)
-        return action, pmfs[torch.arange(len(x)), action]
+        return action, avars[torch.arange(len(x)), pmfs[torch.arange(len(x)), action]
 
 
 def linear_schedule(start_e: float, end_e: float, duration: int, t: int):
@@ -185,9 +187,9 @@ if __name__ == "__main__":
     envs = gym.vector.SyncVectorEnv([make_env(args.env_id, args.seed, 0, args.capture_video, run_name)])
     assert isinstance(envs.single_action_space, gym.spaces.Discrete), "only discrete action space is supported"
 
-    q_network = QNetwork(envs, n_atoms=args.n_atoms, v_min=args.v_min, v_max=args.v_max).to(device)
+    q_network = QNetwork(envs, n_atoms=args.n_atoms, v_min=args.v_min, v_max=args.v_max, n_avars=args.n_avars).to(device)
     optimizer = optim.Adam(q_network.parameters(), lr=args.learning_rate, eps=0.01 / args.batch_size)
-    target_network = QNetwork(envs, n_atoms=args.n_atoms, v_min=args.v_min, v_max=args.v_max).to(device)
+    target_network = QNetwork(envs, n_atoms=args.n_atoms, v_min=args.v_min, v_max=args.v_max, n_avars=args.n_avars).to(device)
     target_network.load_state_dict(q_network.state_dict())
 
     rb = ReplayBuffer(
@@ -208,7 +210,7 @@ if __name__ == "__main__":
         if random.random() < epsilon:
             actions = np.array([envs.single_action_space.sample() for _ in range(envs.num_envs)])
         else:
-            actions, pmf = q_network.get_action(torch.Tensor(obs).to(device))
+            actions, avar, pmf = q_network.get_action(torch.Tensor(obs).to(device))
             actions = actions.cpu().numpy()
 
         # TRY NOT TO MODIFY: execute the game and log data.
@@ -238,10 +240,13 @@ if __name__ == "__main__":
             if global_step % args.train_frequency == 0:
                 data = rb.sample(args.batch_size)
                 with torch.no_grad():
-                    _, next_pmfs = target_network.get_action(data.next_observations)
-                    next_atoms = data.rewards + args.gamma * target_network.atoms * (1 - data.dones)
+                    #_, next_pmfs = target_network.get_action(data.next_observations)
+                    _, next_avars, next_pmfs = q_network.get_action(data.next_observations)  #use online q-net as target
+                    next_atoms = data.rewards + args.gamma * next_avars * (1 - data.dones)
+                    next_atoms = next_atoms.mean(dim=-1, keepdim=True)
+                    next_pmfs_Dirac = torch.ones_like(next_atoms)
                     # projection
-                    delta_z = target_network.atoms[1] - target_network.atoms[0]
+                    delta_z = q_network.atoms[1] - q_network.atoms[0]
                     tz = next_atoms.clamp(args.v_min, args.v_max)
 
                     b = (tz - args.v_min) / delta_z
@@ -249,15 +254,34 @@ if __name__ == "__main__":
                     u = b.ceil().clamp(0, args.n_atoms - 1)
                     # (l == u).float() handles the case where bj is exactly an integer
                     # example bj = 1, then the upper ceiling should be uj= 2, and lj= 1
-                    d_m_l = (u + (l == u).float() - b) * next_pmfs
-                    d_m_u = (b - l) * next_pmfs
+                    d_m_l = (u + (l == u).float() - b) * next_pmfs_Dirac
+                    d_m_u = (b - l) * next_pmfs_Dirac
                     target_pmfs = torch.zeros_like(next_pmfs)
                     for i in range(target_pmfs.size(0)):
                         target_pmfs[i].index_add_(0, l[i].long(), d_m_l[i])
                         target_pmfs[i].index_add_(0, u[i].long(), d_m_u[i])
 
-                _, old_pmfs = q_network.get_action(data.observations, data.actions.flatten())
+                _, old_avars, old_pmfs = q_network.get_action(data.observations, data.actions.flatten())
                 loss = (-(target_pmfs * old_pmfs.clamp(min=1e-5, max=1 - 1e-5).log()).sum(-1)).mean()
+
+                # add squared Wasserstein-2 loss
+
+                with torch.no_grad():
+                    # avar intervals
+                    i_window = torch.arange( 1, args.n_avars + 1 ) / args.n_avars  # avar integration segments
+                    j_right = torch.cumsum(old_pmfs, -1)  # cumulative probabilities of the N+1 atoms
+                    j_left = j_right - old_pmfs
+                    i_window = i_window[None, :, None]
+                    j_right = j_right[:, None, :]
+                    j_left = j_left[:, None, :]
+                    # compute avars
+                    minij = torch.minimum( i_window, j_right )
+                    maxij = torch.maximum( i_window - 1.0/ args.n_avars , j_left )
+                    lengths_inter = torch.maximum( torch.zeros_like(minij - maxij), minij - maxij )  # matrix of lengths of intersections of intervals [(i-1)/N, i/N] with [(j-1)/(N+1), j/(N+1)]
+                    target_avars = args.n_avars * torch.matmul(lengths_inter, q_network.atoms)
+
+                w2loss = ( old_avars - target_avars )**2
+                loss = loss + w2loss.mean(-1).mean()
 
                 if global_step % 100 == 0:
                     writer.add_scalar("losses/loss", loss.item(), global_step)
