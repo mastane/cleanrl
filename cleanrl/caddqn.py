@@ -256,7 +256,7 @@ if __name__ == "__main__":
                     lengths_inter = torch.maximum( torch.zeros_like(minij - maxij), minij - maxij )  # matrix of lengths of intersections of intervals [(i-1)/N, i/N] with [(j-1)/(N+1), j/(N+1)]
                     target_avars = args.n_avars * torch.matmul(lengths_inter, q_network.atoms)
 
-                w2loss = ( old_avars - target_avars )**2
+                w2loss = nn.functional.mse_loss(old_avars, target_avars, reduction='none')  #( old_avars - target_avars )**2
                 loss = loss + w2loss.mean(-1).mean()
 
                 if global_step % 100 == 0:
