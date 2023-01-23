@@ -225,17 +225,19 @@ if __name__ == "__main__":
                 with torch.no_grad():
                     _, next_pmfs = target_network.get_action(data.next_observations)
                     next_atoms = data.rewards + args.gamma * target_network.atoms * (1 - data.dones)
+                    os_atom = (next_pmfs*next_atoms).sum(dim=-1, keepdim=True)
+                    os_pmfs = torch.ones_like(os_atom)
                     # projection
                     delta_z = target_network.atoms[1] - target_network.atoms[0]
-                    tz = next_atoms.clamp(args.v_min, args.v_max)
+                    tz = os_atom.clamp(args.v_min, args.v_max)
 
                     b = (tz - args.v_min) / delta_z
                     l = b.floor().clamp(0, args.n_atoms - 1)
                     u = b.ceil().clamp(0, args.n_atoms - 1)
                     # (l == u).float() handles the case where bj is exactly an integer
                     # example bj = 1, then the upper ceiling should be uj= 2, and lj= 1
-                    d_m_l = (u + (l == u).float() - b) * next_pmfs
-                    d_m_u = (b - l) * next_pmfs
+                    d_m_l = (u + (l == u).float() - b) * os_pmfs
+                    d_m_u = (b - l) * os_pmfs
                     target_pmfs = torch.zeros_like(next_pmfs)
                     for i in range(target_pmfs.size(0)):
                         target_pmfs[i].index_add_(0, l[i].long(), d_m_l[i])
