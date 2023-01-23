@@ -244,8 +244,9 @@ if __name__ == "__main__":
                 with torch.no_grad():
                     # avar intervals
                     i_window = torch.arange( 1, args.n_avars + 1 ) / args.n_avars  # avar integration segments
-                    j_right = torch.cumsum(old_pmfs, -1)  # cumulative probabilities of the N+1 atoms
-                    j_left = j_right - old_pmfs
+                    old_pmfs_detach = old_pmfs.detach()
+                    j_right = torch.cumsum(old_pmfs_detach, -1)  # cumulative probabilities of the N+1 atoms
+                    j_left = j_right - old_pmfs_detach
                     i_window = i_window[None, :, None]
                     j_right = j_right[:, None, :]
                     j_left = j_left[:, None, :]
