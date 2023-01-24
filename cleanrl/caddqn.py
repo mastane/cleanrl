@@ -101,19 +101,15 @@ class QNetwork(nn.Module):
             nn.ReLU(),
             nn.Linear(120, 84),
             nn.ReLU(),
-            nn.Linear(84, self.n * n_atoms),
+            #nn.Linear(84, self.n * n_atoms),
         )
-        self.network_avar = nn.Sequential(
-            nn.Linear(np.array(env.single_observation_space.shape).prod(), 120),
-            nn.ReLU(),
-            nn.Linear(120, 84),
-            nn.ReLU(),
-            nn.Linear(84, self.n * n_avars),
-        )
+        self.linear_atoms = nn.Linear(84, self.n * n_atoms)
+        self.linear_avars = nn.Linear(84, self.n * n_avars)
 
     def get_action(self, x, action=None):
-        logits = self.network(x)
-        avars = self.network_avar(x).view(len(x), self.n, self.n_avars)
+        logits_both = self.network(x)
+        logits = self.linear_atoms(logits_both)
+        avars = self.linear_avars(logits_both).view(len(x), self.n, self.n_avars)
         # probability mass function for each action
         pmfs = torch.softmax(logits.view(len(x), self.n, self.n_atoms), dim=2)
         #q_values = (pmfs * self.atoms).sum(2)
@@ -215,8 +211,8 @@ if __name__ == "__main__":
             if global_step % args.train_frequency == 0:
                 data = rb.sample(args.batch_size)
                 with torch.no_grad():
-                    #_, next_avars, _ = target_network.get_action(data.next_observations)
-                    _, next_avars, next_pmfs = q_network.get_action(data.next_observations)  #use online q-net as target
+                    _, next_avars, next_pmfs = target_network.get_action(data.next_observations)
+                    #_, next_avars, next_pmfs = q_network.get_action(data.next_observations)  #use online q-net as target
                     next_atoms = data.rewards + args.gamma * next_avars * (1 - data.dones)
                     next_atoms = next_atoms.mean(dim=-1, keepdim=True)
                     next_pmfs_Dirac = torch.ones_like(next_atoms)
@@ -256,18 +252,18 @@ if __name__ == "__main__":
                     lengths_inter = torch.maximum( torch.zeros_like(minij - maxij), minij - maxij )  # matrix of lengths of intersections of intervals [(i-1)/N, i/N] with [(j-1)/(N+1), j/(N+1)]
                     target_avars = args.n_avars * torch.matmul(lengths_inter, q_network.atoms)
 
-                old_avars = torch.nn.functional.normalize(old_avars, dim=-1)
-                target_avars = torch.nn.functional.normalize(target_avars, dim=-1)
+                #old_avars = torch.nn.functional.normalize(old_avars, dim=-1)
+                #target_avars = torch.nn.functional.normalize(target_avars, dim=-1)
                 w2loss = nn.functional.mse_loss(old_avars, target_avars, reduction='mean')  #( old_avars - target_avars )**2
                 #w2loss = w2loss.mean(-1).mean()
-                loss = klloss + 10*w2loss
+                loss = klloss + w2loss
 
                 if global_step % 100 == 0:
                     writer.add_scalar("losses/loss", loss.item(), global_step)
                     old_val = old_avars.mean(1)  #(old_pmfs * q_network.atoms).sum(1)
                     writer.add_scalar("losses/q_values", old_val.mean().item(), global_step)
                     writer.add_scalar("losses/KL_LOSS", klloss.mean().item(), global_step)
-                    writer.add_scalar("losses/W2_LOSS", 10*w2loss.mean().item(), global_step)
+                    writer.add_scalar("losses/W2_LOSS", w2loss.mean().item(), global_step)
                     for i in range(args.n_avars):
                         writer.add_scalar("losses/AVaR "+str(i+1), old_avars.mean(0)[i].item(), global_step)
                     print("SPS:", int(global_step / (time.time() - start_time)))
