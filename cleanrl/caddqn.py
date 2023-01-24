@@ -237,7 +237,7 @@ if __name__ == "__main__":
                         target_pmfs[i].index_add_(0, u[i].long(), d_m_u[i])
 
                 _, old_avars, old_pmfs = q_network.get_action(data.observations, data.actions.flatten())
-                loss = (-(target_pmfs * old_pmfs.clamp(min=1e-5, max=1 - 1e-5).log()).sum(-1)).mean()
+                klloss = (-(target_pmfs * old_pmfs.clamp(min=1e-5, max=1 - 1e-5).log()).sum(-1)).mean()
 
                 # add squared Wasserstein-2 loss
 
@@ -256,13 +256,20 @@ if __name__ == "__main__":
                     lengths_inter = torch.maximum( torch.zeros_like(minij - maxij), minij - maxij )  # matrix of lengths of intersections of intervals [(i-1)/N, i/N] with [(j-1)/(N+1), j/(N+1)]
                     target_avars = args.n_avars * torch.matmul(lengths_inter, q_network.atoms)
 
-                w2loss = nn.functional.mse_loss(old_avars, target_avars, reduction='none')  #( old_avars - target_avars )**2
-                loss = loss + w2loss.mean(-1).mean()
+                old_avars = torch.nn.functional.normalize(old_avars, dim=-1)
+                target_avars = torch.nn.functional.normalize(target_avars, dim=-1)
+                w2loss = nn.functional.mse_loss(old_avars, target_avars, reduction='mean')  #( old_avars - target_avars )**2
+                #w2loss = w2loss.mean(-1).mean()
+                loss = klloss + 10*w2loss
 
                 if global_step % 100 == 0:
                     writer.add_scalar("losses/loss", loss.item(), global_step)
-                    old_val = (old_pmfs * q_network.atoms).sum(1)
+                    old_val = old_avars.mean(1)  #(old_pmfs * q_network.atoms).sum(1)
                     writer.add_scalar("losses/q_values", old_val.mean().item(), global_step)
+                    writer.add_scalar("losses/KL_LOSS", klloss.mean().item(), global_step)
+                    writer.add_scalar("losses/W2_LOSS", 10*w2loss.mean().item(), global_step)
+                    for i in range(args.n_avars):
+                        writer.add_scalar("losses/AVaR "+str(i+1), old_avars.mean(0)[i].item(), global_step)
                     print("SPS:", int(global_step / (time.time() - start_time)))
                     writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
 
