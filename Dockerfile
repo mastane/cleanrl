@@ -1,32 +1,25 @@
-FROM nvidia/cuda:11.4.2-runtime-ubuntu20.04
+FROM nvidia/cuda:11.4.1-cudnn8-devel-ubuntu20.04
+WORKDIR /usr/src/app
+RUN apt-get update
+RUN apt-get install -y python3 python3-pip git
 
-# install ubuntu dependencies
-ENV DEBIAN_FRONTEND=noninteractive 
-RUN apt-get update && \
-    apt-get -y install python3-pip xvfb ffmpeg git build-essential python-opengl
-RUN ln -s /usr/bin/python3 /usr/bin/python
+# Timesone setting for system libararies required by opencv
+ARG DEBIAN_FRONTEND=noninteractive
+ENV TZ=Asia/Dubai
+RUN apt-get update && apt-get install ffmpeg libsm6 libxext6  -y
+RUN pip install opencv-python
 
-# install python dependencies
-RUN mkdir cleanrl_utils && touch cleanrl_utils/__init__.py
-RUN pip install poetry --upgrade
-COPY pyproject.toml pyproject.toml
-COPY poetry.lock poetry.lock
-RUN poetry install
-RUN poetry install --with atari
-RUN poetry install --with pybullet
+RUN pip install ipdb numpy matplotlib tqdm wandb ipdb
+RUN pip install torch==1.12.1+cu113 torchvision==0.13.1+cu113 torchaudio==0.12.1 --extra-index-url https://download.pytorch.org/whl/cu113
+RUN pip install gym[atari]==0.23.1
+RUN pip install gym[accept-rom-license]
+RUN pip install tensorboard pygame==2.1.0
+RUN pip install stable-baselines3==1.2.0
+RUN sed -i 's/randint(1/integers(1/g' /usr/local/lib/python3.8/dist-packages/stable_baselines3/common/atari_wrappers.py
 
-# install mujoco_py
-RUN apt-get -y install wget unzip software-properties-common \
-    libgl1-mesa-dev \
-    libgl1-mesa-glx \
-    libglew-dev \
-    libosmesa6-dev patchelf
-RUN poetry install --with mujoco_py
-RUN poetry run python -c "import mujoco_py"
+#COPY . .
+CMD nvidia-smi
 
-COPY entrypoint.sh /usr/local/bin/
-RUN chmod 777 /usr/local/bin/entrypoint.sh
-ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
-
-# copy local files
-COPY ./cleanrl /cleanrl
+#CMD nvidia-smi && \
+#python3 dqn_atari.py  --env-id BreakoutNoFrameskip-v4
+# --track --wandb-project-name=cleanrl
