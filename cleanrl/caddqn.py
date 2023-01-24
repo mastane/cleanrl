@@ -112,11 +112,12 @@ class QNetwork(nn.Module):
         avars = self.linear_avars(logits_both).view(len(x), self.n, self.n_avars)
         # probability mass function for each action
         pmfs = torch.softmax(logits.view(len(x), self.n, self.n_atoms), dim=2)
-        #q_values = (pmfs * self.atoms).sum(2)
-        q_values = avars.mean(2)
+        q_values = (pmfs * self.atoms).sum(2)
+        q_values_avar = avars.mean(2)
         if action is None:
-            #action = torch.argmax(q_values, 1)
             action = torch.argmax(q_values, 1)
+            action_avar = torch.argmax(q_values_avar, 1)
+            return action_avar, avars[torch.arange(len(x)), action_avar], pmfs[torch.arange(len(x)), action]
         return action, avars[torch.arange(len(x)), action], pmfs[torch.arange(len(x)), action]
 
 
@@ -213,7 +214,8 @@ if __name__ == "__main__":
                 with torch.no_grad():
                     _, next_avars, next_pmfs = target_network.get_action(data.next_observations)
                     #_, next_avars, next_pmfs = q_network.get_action(data.next_observations)  #use online q-net as target
-                    next_atoms = data.rewards + args.gamma * next_avars * (1 - data.dones)
+                    #next_atoms = data.rewards + args.gamma * next_avars * (1 - data.dones)
+                    next_atoms = data.rewards + args.gamma * target_network.atoms * (1 - data.dones)
                     next_atoms = next_atoms.mean(dim=-1, keepdim=True)
                     next_pmfs_Dirac = torch.ones_like(next_atoms)
                     # projection
@@ -225,8 +227,8 @@ if __name__ == "__main__":
                     u = b.ceil().clamp(0, args.n_atoms - 1)
                     # (l == u).float() handles the case where bj is exactly an integer
                     # example bj = 1, then the upper ceiling should be uj= 2, and lj= 1
-                    d_m_l = (u + (l == u).float() - b) * next_pmfs_Dirac
-                    d_m_u = (b - l) * next_pmfs_Dirac
+                    d_m_l = (u + (l == u).float() - b) *  next_pmfs_Dirac  #next_pmfs
+                    d_m_u = (b - l) * next_pmfs_Dirac  #next_pmfs
                     target_pmfs = torch.zeros_like(next_pmfs)
                     for i in range(target_pmfs.size(0)):
                         target_pmfs[i].index_add_(0, l[i].long(), d_m_l[i])
