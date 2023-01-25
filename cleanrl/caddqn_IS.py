@@ -101,15 +101,26 @@ class QNetwork(nn.Module):
             nn.ReLU(),
             nn.Linear(120, 84),
             nn.ReLU(),
-            #nn.Linear(84, self.n * n_atoms),
+            nn.Linear(84, self.n * n_atoms),
         )
-        self.linear_atoms = nn.Linear(84, self.n * n_atoms)
-        self.linear_avars = nn.Linear(84, self.n * n_avars)
+        #self.linear_atoms = nn.Linear(84, self.n * n_atoms)
+        #self.linear_avars = nn.Linear(84, self.n * n_avars)
+        self.network_avar = nn.Sequential(
+            nn.Linear(np.array(env.single_observation_space.shape).prod(), 120),
+            nn.ReLU(),
+            nn.Linear(120, 84),
+            nn.ReLU(),
+            nn.Linear(84, self.n * n_avars),
+        )
 
     def get_action(self, x, action=None):
+        """
         logits_both = self.network(x)
         logits = self.linear_atoms(logits_both)
         avars = self.linear_avars(logits_both).view(len(x), self.n, self.n_avars)
+        """
+        avars = self.network_avar(x).view(len(x), self.n, self.n_avars)
+        logits = self.network(x)
         # probability mass function for each action
         pmfs = torch.softmax(logits.view(len(x), self.n, self.n_atoms), dim=2)
         q_values = (pmfs * self.atoms).sum(2)
@@ -213,11 +224,10 @@ if __name__ == "__main__":
                 data = rb.sample(args.batch_size)
                 with torch.no_grad():
                     _, next_avars, next_pmfs = target_network.get_action(data.next_observations)
-                    #_, next_avars, next_pmfs = q_network.get_action(data.next_observations)  #use online q-net as target
-                    #next_atoms = data.rewards + args.gamma * next_avars * (1 - data.dones)
-                    next_atoms = data.rewards + args.gamma * target_network.atoms * (1 - data.dones)
-                    #next_atoms = next_atoms.mean(dim=-1, keepdim=True)
-                    next_atoms = (next_pmfs*next_atoms).sum(dim=-1, keepdim=True)
+                    _, next_avars_on, next_pmfs_on = q_network.get_action(data.next_observations)  #use online q-net as target
+                    next_atoms = data.rewards + args.gamma * next_avars_on.detach().mean(dim=-1, keepdim=True) * (1 - data.dones)
+                    #next_atoms = data.rewards + args.gamma * target_network.atoms * (1 - data.dones)
+                    #next_atoms = (next_pmfs*next_atoms).sum(dim=-1, keepdim=True)
                     next_pmfs_Dirac = torch.ones_like(next_atoms)
                     # projection
                     delta_z = q_network.atoms[1] - q_network.atoms[0]
@@ -258,7 +268,8 @@ if __name__ == "__main__":
                     """
 
                     # IMPORTANCE SAMPLING TARGET
-                    next_atoms = torch.squeeze(next_atoms, dim=-1)
+                    next_atoms = data.rewards + args.gamma * next_avars.mean(dim=-1) * (1 - data.dones)
+                    #next_atoms = torch.squeeze(next_atoms, dim=-1)
                     idx_sort = torch.searchsorted(q_network.atoms, next_atoms)  # find index such that adding target will keep atoms sorted
                     probas = old_pmfs.detach()
                     cumprobas = torch.cumsum(probas, dim=-1) - probas
@@ -268,8 +279,10 @@ if __name__ == "__main__":
                     # find which AVaR to update
                     segments = torch.arange( 1, args.n_avars ) / args.n_avars  # avar integration segments
                     idx_avar = torch.bucketize(cdf_target, segments)
-                    target_IS = args.n_avars * next_atoms  # IMPORTANCE SAMPLING REWEIGHTING
                     oh2 = nn.functional.one_hot( idx_avar, num_classes=args.n_avars )
+                    #target_IS = args.n_avars * next_atoms  # IMPORTANCE SAMPLING REWEIGHTING
+                    target_IS = data.rewards + args.gamma * next_avars.mean(-1) * (1 - data.dones)
+                    target_IS = args.n_avars * target_IS  # IMPORTANCE SAMPLING REWEIGHTING
 
                 chosen_avar = ( old_avars * oh2 ).sum(-1)
                 # IS target = 0 for other atoms
