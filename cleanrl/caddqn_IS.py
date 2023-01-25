@@ -224,10 +224,10 @@ if __name__ == "__main__":
                 data = rb.sample(args.batch_size)
                 with torch.no_grad():
                     _, next_avars, next_pmfs = target_network.get_action(data.next_observations)
-                    _, next_avars_on, next_pmfs_on = q_network.get_action(data.next_observations)  #use online q-net as target
-                    next_atoms = data.rewards + args.gamma * next_avars_on.detach().mean(dim=-1, keepdim=True) * (1 - data.dones)
-                    #next_atoms = data.rewards + args.gamma * target_network.atoms * (1 - data.dones)
-                    #next_atoms = (next_pmfs*next_atoms).sum(dim=-1, keepdim=True)
+                    #_, next_avars_on, next_pmfs_on = q_network.get_action(data.next_observations)  #use online q-net as target
+                    #next_atoms = data.rewards + args.gamma * next_avars_on.detach().mean(dim=-1, keepdim=True) * (1 - data.dones)
+                    next_atoms = data.rewards + args.gamma * target_network.atoms * (1 - data.dones)
+                    next_atoms = (next_pmfs*next_atoms).sum(dim=-1, keepdim=True)
                     next_pmfs_Dirac = torch.ones_like(next_atoms)
                     # projection
                     delta_z = q_network.atoms[1] - q_network.atoms[0]
@@ -280,9 +280,9 @@ if __name__ == "__main__":
                     segments = torch.arange( 1, args.n_avars ) / args.n_avars  # avar integration segments
                     idx_avar = torch.bucketize(cdf_target, segments)
                     oh2 = nn.functional.one_hot( idx_avar, num_classes=args.n_avars )
-                    #target_IS = args.n_avars * next_atoms  # IMPORTANCE SAMPLING REWEIGHTING
-                    target_IS = data.rewards + args.gamma * next_avars.mean(-1) * (1 - data.dones)
-                    target_IS = args.n_avars * target_IS  # IMPORTANCE SAMPLING REWEIGHTING
+                    target_IS = args.n_avars * next_atoms  # IMPORTANCE SAMPLING REWEIGHTING
+                    #target_IS = data.rewards + args.gamma * next_avars.mean(dim=-1) * (1 - data.dones)
+                    #target_IS = args.n_avars * target_IS  # IMPORTANCE SAMPLING REWEIGHTING
 
                 chosen_avar = ( old_avars * oh2 ).sum(-1)
                 # IS target = 0 for other atoms
