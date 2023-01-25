@@ -261,13 +261,12 @@ if __name__ == "__main__":
                     next_atoms = torch.squeeze(next_atoms, dim=-1)
                     idx_sort = torch.searchsorted(q_network.atoms, next_atoms)  # find index such that adding target will keep atoms sorted
                     probas = old_pmfs.detach()
-                    cumprobas = torch.cumsum(probas) - probas
+                    cumprobas = torch.cumsum(probas, dim=-1) - probas
                     cumprobas = torch.cat((cumprobas, torch.ones(len(data.observations), 1)), dim=-1)
                     oh = nn.functional.one_hot( idx_sort, num_classes=args.n_atoms+1 )
                     cdf_target = ( cumprobas * oh ).sum(-1)
                     # find which AVaR to update
-                    #num_avars = dist_qa_tm1.shape[-1]
-                    segments = torch.arange( 1, num_avars ) / args.n_avars  # avar integration segments
+                    segments = torch.arange( 1, args.n_avars ) / args.n_avars  # avar integration segments
                     idx_avar = torch.bucketize(cdf_target, segments)
                     target_IS = args.n_avars * next_atoms  # IMPORTANCE SAMPLING REWEIGHTING
                     oh2 = nn.functional.one_hot( idx_avar, num_classes=args.n_avars )
