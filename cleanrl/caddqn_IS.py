@@ -225,9 +225,9 @@ if __name__ == "__main__":
                 with torch.no_grad():
                     _, next_avars, next_pmfs = target_network.get_action(data.next_observations)
                     #_, next_avars_on, next_pmfs_on = q_network.get_action(data.next_observations)  #use online q-net as target
-                    #next_atoms = data.rewards + args.gamma * next_avars_on.detach().mean(dim=-1, keepdim=True) * (1 - data.dones)
-                    next_atoms = data.rewards + args.gamma * target_network.atoms * (1 - data.dones)
-                    next_atoms = (next_pmfs*next_atoms).sum(dim=-1, keepdim=True)
+                    next_atoms = data.rewards + args.gamma * next_avars.mean(dim=-1, keepdim=True) * (1 - data.dones)
+                    #next_atoms = data.rewards + args.gamma * target_network.atoms * (1 - data.dones)
+                    #next_atoms = (next_pmfs*next_atoms).sum(dim=-1, keepdim=True)
                     next_pmfs_Dirac = torch.ones_like(next_atoms)
                     # projection
                     delta_z = q_network.atoms[1] - q_network.atoms[0]
@@ -268,10 +268,11 @@ if __name__ == "__main__":
                     """
 
                     # IMPORTANCE SAMPLING TARGET
-                    next_atoms = data.rewards + args.gamma * next_avars.mean(dim=-1) * (1 - data.dones)
-                    #next_atoms = torch.squeeze(next_atoms, dim=-1)
+                    #next_atoms = data.rewards + args.gamma * next_avars.mean(dim=-1) * (1 - data.dones)
+                    next_atoms = torch.squeeze(next_atoms, dim=-1)
                     idx_sort = torch.searchsorted(q_network.atoms, next_atoms)  # find index such that adding target will keep atoms sorted
-                    probas = old_pmfs.detach()
+                    _, _, old_pmfs_target = target_network.get_action(data.observations, data.actions.flatten())
+                    probas = old_pmfs_target
                     cumprobas = torch.cumsum(probas, dim=-1) - probas
                     cumprobas = torch.cat((cumprobas, torch.ones(len(data.observations), 1)), dim=-1)
                     oh = nn.functional.one_hot( idx_sort, num_classes=args.n_atoms+1 )
