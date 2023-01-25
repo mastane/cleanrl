@@ -216,7 +216,8 @@ if __name__ == "__main__":
                     #_, next_avars, next_pmfs = q_network.get_action(data.next_observations)  #use online q-net as target
                     #next_atoms = data.rewards + args.gamma * next_avars * (1 - data.dones)
                     next_atoms = data.rewards + args.gamma * target_network.atoms * (1 - data.dones)
-                    next_atoms = next_atoms.mean(dim=-1, keepdim=True)
+                    #next_atoms = next_atoms.mean(dim=-1, keepdim=True)
+                    next_atoms = (next_pmfs*next_atoms).sum(dim=-1, keepdim=True)
                     next_pmfs_Dirac = torch.ones_like(next_atoms)
                     # projection
                     delta_z = q_network.atoms[1] - q_network.atoms[0]
@@ -240,6 +241,7 @@ if __name__ == "__main__":
                 # add squared Wasserstein-2 loss
 
                 with torch.no_grad():
+                    """
                     # avar intervals
                     i_window = torch.arange( 1, args.n_avars + 1 ) / args.n_avars  # avar integration segments
                     old_pmfs_detach = old_pmfs.detach()
@@ -253,19 +255,43 @@ if __name__ == "__main__":
                     maxij = torch.maximum( i_window - 1.0/ args.n_avars , j_left )
                     lengths_inter = torch.maximum( torch.zeros_like(minij - maxij), minij - maxij )  # matrix of lengths of intersections of intervals [(i-1)/N, i/N] with [(j-1)/(N+1), j/(N+1)]
                     target_avars = args.n_avars * torch.matmul(lengths_inter, q_network.atoms)
+                    """
+
+                    # IMPORTANCE SAMPLING TARGET
+                    next_atoms = torch.squeeze(next_atoms, dim=-1)
+                    idx_sort = torch.searchsorted(q_network.atoms, next_atoms)  # find index such that adding target will keep atoms sorted
+                    probas = old_pmfs.detach()
+                    cumprobas = torch.cumsum(probas) - probas
+                    cumprobas = torch.cat((cumprobas, torch.ones(len(data.observations), 1)), dim=-1)
+                    oh = nn.functional.one_hot( idx_sort, num_classes=args.n_atoms+1 )
+                    cdf_target = ( cumprobas * oh ).sum(-1)
+                    # find which AVaR to update
+                    #num_avars = dist_qa_tm1.shape[-1]
+                    segments = torch.arange( 1, num_avars ) / args.n_avars  # avar integration segments
+                    idx_avar = torch.bucketize(cdf_target, segments)
+                    target_IS = args.n_avars * next_atoms  # IMPORTANCE SAMPLING REWEIGHTING
+                    oh2 = nn.functional.one_hot( idx_avar, num_classes=args.n_avars )
+
+                chosen_avar = ( old_avars * oh2 ).sum(-1)
+                # IS target = 0 for other atoms
+                zero_hot = torch.ones_like( old_avars ) - oh2
+                IS_errors = zero_hot * old_avars
+                w2loss_IS = nn.functional.mse_loss(chosen_avar, target_IS, reduction='none')
+                w2loss_IS = w2loss_IS + nn.functional.mse_loss(IS_errors, torch.zeros_like(IS_errors), reduction='none').sum(-1)
+                w2loss_IS = ( w2loss_IS / args.n_avars ).mean()
 
                 #old_avars = torch.nn.functional.normalize(old_avars, dim=-1)
                 #target_avars = torch.nn.functional.normalize(target_avars, dim=-1)
-                w2loss = nn.functional.mse_loss(old_avars, target_avars, reduction='mean')  #( old_avars - target_avars )**2
+                ##w2loss = nn.functional.mse_loss(old_avars, target_avars, reduction='mean')  #( old_avars - target_avars )**2
                 #w2loss = w2loss.mean(-1).mean()
-                loss = klloss + w2loss
+                loss = klloss + w2loss_IS
 
                 if global_step % 100 == 0:
                     writer.add_scalar("losses/loss", loss.item(), global_step)
                     old_val = old_avars.mean(1)  #(old_pmfs * q_network.atoms).sum(1)
                     writer.add_scalar("losses/q_values", old_val.mean().item(), global_step)
                     writer.add_scalar("losses/KL_LOSS", klloss.mean().item(), global_step)
-                    writer.add_scalar("losses/W2_LOSS", w2loss.mean().item(), global_step)
+                    writer.add_scalar("losses/W2_LOSS", w2loss_IS.mean().item(), global_step)
                     for i in range(args.n_avars):
                         writer.add_scalar("losses/AVaR "+str(i+1), old_avars.mean(0)[i].item(), global_step)
                     print("SPS:", int(global_step / (time.time() - start_time)))
