@@ -307,6 +307,8 @@ if __name__ == "__main__":
                     writer.add_scalar("losses/W2_LOSS", w2loss_IS.mean().item(), global_step)
                     for i in range(args.n_avars):
                         writer.add_scalar("losses/AVaR "+str(i+1), old_avars.mean(0)[i].item(), global_step)
+                    for i in range(args.n_atoms):
+                        writer.add_scalar("losses/proba "+str(i+1), old_pmfs.mean(0)[i].item(), global_step)
                     print("SPS:", int(global_step / (time.time() - start_time)))
                     writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
 
