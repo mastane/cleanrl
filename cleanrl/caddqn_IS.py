@@ -211,10 +211,10 @@ if __name__ == "__main__":
             risky_actions = risky_actions.cpu().numpy()
 
             # (RANDOMIZED) CHOICE SAFE/RISKY/NEUTRAL STRATEGY
-            if random.random() < 0.5:
+            if random.random() < 0.8:
                 actions = actions_dqn  # DQN="RISK NEUTRAL"
             else:
-                actions = safe_actions
+                actions = risky_actions
 
         # TRY NOT TO MODIFY: execute the game and log data.
         next_obs, rewards, dones, infos = envs.step(actions)
@@ -293,6 +293,7 @@ if __name__ == "__main__":
                     #next_atoms = torch.squeeze(next_atoms, dim=-1)
 
                     target_dqn = data.rewards.flatten() + args.gamma * next_dqn * (1 - data.dones.flatten())
+                    next_atoms = target_dqn
 
                     idx_sort = torch.searchsorted(q_network.atoms, next_atoms)  # find index such that adding target will keep atoms sorted
                     _, _, old_pmfs_target, _ = target_network.get_action(data.observations, data.actions.flatten())
@@ -305,7 +306,8 @@ if __name__ == "__main__":
                     segments = torch.arange( 1, args.n_avars ) / args.n_avars  # avar integration segments
                     idx_avar = torch.bucketize(cdf_target, segments)
                     oh2 = nn.functional.one_hot( idx_avar, num_classes=args.n_avars )
-                    target_IS = args.n_avars * next_atoms  # IMPORTANCE SAMPLING REWEIGHTING
+                    target_IS = next_atoms
+                    ##target_IS = args.n_avars * target_IS  # IMPORTANCE SAMPLING REWEIGHTING
                     #target_IS = data.rewards + args.gamma * next_avars.mean(dim=-1) * (1 - data.dones)
                     #target_IS = args.n_avars * target_IS  # IMPORTANCE SAMPLING REWEIGHTING
 
@@ -314,15 +316,15 @@ if __name__ == "__main__":
                 zero_hot = torch.ones_like( old_avars ) - oh2
                 IS_errors = zero_hot * old_avars
                 w2loss_IS = nn.functional.mse_loss(chosen_avar, target_IS, reduction='none')
-                w2loss_IS = w2loss_IS + nn.functional.mse_loss(IS_errors, torch.zeros_like(IS_errors), reduction='none').sum(-1)
-                w2loss_IS = ( w2loss_IS / args.n_avars ).mean()
+                ##w2loss_IS = w2loss_IS + nn.functional.mse_loss(IS_errors, torch.zeros_like(IS_errors), reduction='none').sum(-1)
+                ##w2loss_IS = ( w2loss_IS / args.n_avars ).mean()
 
                 #old_avars = torch.nn.functional.normalize(old_avars, dim=-1)
                 #target_avars = torch.nn.functional.normalize(target_avars, dim=-1)
                 ##w2loss = nn.functional.mse_loss(old_avars, target_avars, reduction='mean')  #( old_avars - target_avars )**2
                 #w2loss = w2loss.mean(-1).mean()
                 loss_dqn = nn.functional.mse_loss(old_dqn, target_dqn, reduction='mean')
-                loss = klloss + w2loss_IS + loss_dqn
+                loss = klloss + w2loss_IS.mean() + loss_dqn
 
                 if global_step % 100 == 0:
                     writer.add_scalar("losses/loss", loss.item(), global_step)
