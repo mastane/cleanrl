@@ -137,7 +137,9 @@ class QNetwork(nn.Module):
             action = torch.argmax(q_values, 1)
             action_avar = torch.argmax(q_values_avar, 1)
             action_dqn = torch.argmax(dqn, 1)
-            return action_avar, avars[torch.arange(len(x)), action_avar], pmfs[torch.arange(len(x)), action], dqn[torch.arange(len(x)), action_dqn]
+            risky_action = torch.argmax(avars[:,:,-1], 1)  #torch.argmax(avars.sum(-1)-avars[:,:,0], 1)
+            safe_action = torch.argmax(avars[:,:,0], 1)  #torch.argmax(avars.sum(-1)-avars[:,:,-1], 1)
+            return action_dqn, action_avar, safe_action, risky_action, avars[torch.arange(len(x)), action_avar], pmfs[torch.arange(len(x)), action], dqn[torch.arange(len(x)), action_dqn]
         return action, avars[torch.arange(len(x)), action], pmfs[torch.arange(len(x)), action], dqn[torch.arange(len(x)), action]
 
 
@@ -202,8 +204,11 @@ if __name__ == "__main__":
             actions = np.array([envs.single_action_space.sample() for _ in range(envs.num_envs)])
         else:
             #actions, pmf = q_network.get_action(torch.Tensor(obs).to(device))
-            actions, avar, pmf, dqn = q_network.get_action(torch.Tensor(obs).to(device))
-            actions = actions.cpu().numpy()
+            actions_dqn, actions_avar, safe_actions, risky_actions, avar, pmf, dqn = q_network.get_action(torch.Tensor(obs).to(device))
+            actions_dqn = actions_dqn.cpu().numpy()
+            actions_avar = actions_avar.cpu().numpy()
+            safe_actions = safe_actions.cpu().numpy()
+            risky_actions = risky_actions.cpu().numpy()
 
         # TRY NOT TO MODIFY: execute the game and log data.
         next_obs, rewards, dones, infos = envs.step(actions)
@@ -232,7 +237,7 @@ if __name__ == "__main__":
             if global_step % args.train_frequency == 0:
                 data = rb.sample(args.batch_size)
                 with torch.no_grad():
-                    _, next_avars, next_pmfs, next_dqn = target_network.get_action(data.next_observations)
+                    _, _, _, _, next_avars, next_pmfs, next_dqn = target_network.get_action(data.next_observations)
                     #_, next_avars_on, next_pmfs_on = q_network.get_action(data.next_observations)  #use online q-net as target
                     ##next_atoms = data.rewards + args.gamma * next_avars.mean(dim=-1, keepdim=True) * (1 - data.dones)
                     next_atoms = data.rewards + args.gamma * next_dqn[:,None] * (1 - data.dones)
@@ -282,7 +287,7 @@ if __name__ == "__main__":
                     #next_atoms = torch.squeeze(next_atoms, dim=-1)
 
                     target_dqn = data.rewards.flatten() + args.gamma * next_dqn * (1 - data.dones.flatten())
-                    
+
                     idx_sort = torch.searchsorted(q_network.atoms, next_atoms)  # find index such that adding target will keep atoms sorted
                     _, _, old_pmfs_target, _ = target_network.get_action(data.observations, data.actions.flatten())
                     probas = old_pmfs_target
