@@ -278,9 +278,11 @@ if __name__ == "__main__":
                     """
 
                     # IMPORTANCE SAMPLING TARGET
-                    #next_atoms = data.rewards + args.gamma * next_avars.mean(dim=-1) * (1 - data.dones)
+                    next_atoms = data.rewards.flatten() + args.gamma * next_avars.mean(dim=-1) * (1 - data.dones.flatten())
                     #next_atoms = torch.squeeze(next_atoms, dim=-1)
-                    next_atoms = next_dqn
+
+                    target_dqn = data.rewards.flatten() + args.gamma * next_dqn * (1 - data.dones.flatten())
+                    
                     idx_sort = torch.searchsorted(q_network.atoms, next_atoms)  # find index such that adding target will keep atoms sorted
                     _, _, old_pmfs_target, _ = target_network.get_action(data.observations, data.actions.flatten())
                     probas = old_pmfs_target
@@ -308,7 +310,7 @@ if __name__ == "__main__":
                 #target_avars = torch.nn.functional.normalize(target_avars, dim=-1)
                 ##w2loss = nn.functional.mse_loss(old_avars, target_avars, reduction='mean')  #( old_avars - target_avars )**2
                 #w2loss = w2loss.mean(-1).mean()
-                loss_dqn = nn.functional.mse_loss(old_dqn, next_dqn, reduction='mean')
+                loss_dqn = nn.functional.mse_loss(old_dqn, target_dqn, reduction='mean')
                 loss = klloss + w2loss_IS + loss_dqn
 
                 if global_step % 100 == 0:
