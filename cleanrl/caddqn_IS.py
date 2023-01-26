@@ -211,7 +211,10 @@ if __name__ == "__main__":
             risky_actions = risky_actions.cpu().numpy()
 
             # (RANDOMIZED) CHOICE SAFE/RISKY/NEUTRAL STRATEGY
-            actions = actions_dqn  # DQN="RISK NEUTRAL"
+            if random.random() < 0.5:
+                actions = actions_dqn  # DQN="RISK NEUTRAL"
+            else:
+                actions = safe_actions
 
         # TRY NOT TO MODIFY: execute the game and log data.
         next_obs, rewards, dones, infos = envs.step(actions)
