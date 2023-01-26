@@ -112,6 +112,13 @@ class QNetwork(nn.Module):
             nn.ReLU(),
             nn.Linear(84, self.n * n_avars),
         )
+        self.network_dqn = nn.Sequential(
+            nn.Linear(np.array(env.single_observation_space.shape).prod(), 120),
+            nn.ReLU(),
+            nn.Linear(120, 84),
+            nn.ReLU(),
+            nn.Linear(84, self.n),
+        )
 
     def get_action(self, x, action=None):
         """
@@ -125,11 +132,13 @@ class QNetwork(nn.Module):
         pmfs = torch.softmax(logits.view(len(x), self.n, self.n_atoms), dim=2)
         q_values = (pmfs * self.atoms).sum(2)
         q_values_avar = avars.mean(2)
+        dqn = self.network_dqn(x)
         if action is None:
             action = torch.argmax(q_values, 1)
             action_avar = torch.argmax(q_values_avar, 1)
-            return action_avar, avars[torch.arange(len(x)), action_avar], pmfs[torch.arange(len(x)), action]
-        return action, avars[torch.arange(len(x)), action], pmfs[torch.arange(len(x)), action]
+            action_dqn = torch.argmax(dqn, 1)
+            return action_avar, avars[torch.arange(len(x)), action_avar], pmfs[torch.arange(len(x)), action], dqn[torch.arange(len(x)), action_dqn]
+        return action, avars[torch.arange(len(x)), action], pmfs[torch.arange(len(x)), action], dqn[torch.arange(len(x)), action]
 
 
 def linear_schedule(start_e: float, end_e: float, duration: int, t: int):
@@ -193,7 +202,7 @@ if __name__ == "__main__":
             actions = np.array([envs.single_action_space.sample() for _ in range(envs.num_envs)])
         else:
             #actions, pmf = q_network.get_action(torch.Tensor(obs).to(device))
-            actions, avar, pmf = q_network.get_action(torch.Tensor(obs).to(device))
+            actions, avar, pmf, dqn = q_network.get_action(torch.Tensor(obs).to(device))
             actions = actions.cpu().numpy()
 
         # TRY NOT TO MODIFY: execute the game and log data.
@@ -223,9 +232,10 @@ if __name__ == "__main__":
             if global_step % args.train_frequency == 0:
                 data = rb.sample(args.batch_size)
                 with torch.no_grad():
-                    _, next_avars, next_pmfs = target_network.get_action(data.next_observations)
+                    _, next_avars, next_pmfs, next_dqn = target_network.get_action(data.next_observations)
                     #_, next_avars_on, next_pmfs_on = q_network.get_action(data.next_observations)  #use online q-net as target
-                    next_atoms = data.rewards + args.gamma * next_avars.mean(dim=-1, keepdim=True) * (1 - data.dones)
+                    ##next_atoms = data.rewards + args.gamma * next_avars.mean(dim=-1, keepdim=True) * (1 - data.dones)
+                    next_atoms = data.rewards + args.gamma * next_dqn[:,None] * (1 - data.dones)
                     #next_atoms = data.rewards + args.gamma * target_network.atoms * (1 - data.dones)
                     #next_atoms = (next_pmfs*next_atoms).sum(dim=-1, keepdim=True)
                     next_pmfs_Dirac = torch.ones_like(next_atoms)
@@ -245,7 +255,7 @@ if __name__ == "__main__":
                         target_pmfs[i].index_add_(0, l[i].long(), d_m_l[i])
                         target_pmfs[i].index_add_(0, u[i].long(), d_m_u[i])
 
-                _, old_avars, old_pmfs = q_network.get_action(data.observations, data.actions.flatten())
+                _, old_avars, old_pmfs, old_dqn = q_network.get_action(data.observations, data.actions.flatten())
                 klloss = (-(target_pmfs * old_pmfs.clamp(min=1e-5, max=1 - 1e-5).log()).sum(-1)).mean()
 
                 # add squared Wasserstein-2 loss
@@ -269,9 +279,10 @@ if __name__ == "__main__":
 
                     # IMPORTANCE SAMPLING TARGET
                     #next_atoms = data.rewards + args.gamma * next_avars.mean(dim=-1) * (1 - data.dones)
-                    next_atoms = torch.squeeze(next_atoms, dim=-1)
+                    #next_atoms = torch.squeeze(next_atoms, dim=-1)
+                    next_atoms = next_dqn
                     idx_sort = torch.searchsorted(q_network.atoms, next_atoms)  # find index such that adding target will keep atoms sorted
-                    _, _, old_pmfs_target = target_network.get_action(data.observations, data.actions.flatten())
+                    _, _, old_pmfs_target, _ = target_network.get_action(data.observations, data.actions.flatten())
                     probas = old_pmfs_target
                     cumprobas = torch.cumsum(probas, dim=-1) - probas
                     cumprobas = torch.cat((cumprobas, torch.ones(len(data.observations), 1)), dim=-1)
@@ -297,7 +308,8 @@ if __name__ == "__main__":
                 #target_avars = torch.nn.functional.normalize(target_avars, dim=-1)
                 ##w2loss = nn.functional.mse_loss(old_avars, target_avars, reduction='mean')  #( old_avars - target_avars )**2
                 #w2loss = w2loss.mean(-1).mean()
-                loss = klloss + w2loss_IS
+                loss_dqn = nn.functional.mse_loss(old_dqn, next_dqn, reduction='mean')
+                loss = klloss + w2loss_IS + loss_dqn
 
                 if global_step % 100 == 0:
                     writer.add_scalar("losses/loss", loss.item(), global_step)
