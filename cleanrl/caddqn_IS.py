@@ -332,6 +332,7 @@ if __name__ == "__main__":
                     writer.add_scalar("losses/q_values", old_val.mean().item(), global_step)
                     writer.add_scalar("losses/KL_LOSS", klloss.mean().item(), global_step)
                     writer.add_scalar("losses/W2_LOSS", w2loss_IS.mean().item(), global_step)
+                    writer.add_scalar("losses/DQN_LOSS", loss_dqn.mean().item(), global_step)
                     for i in range(args.n_avars):
                         writer.add_scalar("losses/AVaR "+str(i+1), old_avars.mean(0)[i].item(), global_step)
                     for i in range(args.n_atoms):
